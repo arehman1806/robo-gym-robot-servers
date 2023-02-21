@@ -44,14 +44,12 @@ class RosBridge:
         rospy.Subscriber('mir_collision', ContactsState, self.collision_callback)
 
         self.target = [0.0] * 3
-        self.mir_pose = [0.0] * 3
-        self.mir_twist = [0.0] *2
-        self.f_scan = [0.0] * 501
-        self.b_scan = [0.0] * 511
-        self.collision = False
-        self.obstacle_0 = [0.0] * 3
-        self.obstacle_1 = [0.0] * 3
-        self.obstacle_2 = [0.0] * 3
+        self.queenie_pose = [0.0] * 3
+        self.visible_handle_points = [0.0]
+        self.queenie_twist = [0.0] * 2
+        self.relative_twist = [0.0] * 6
+        self.in_contact = False
+        self.obstacle_to_manipulate = [0.0] * 3
 
         # Reference frame for Path
         self.path_frame = 'map'
@@ -90,24 +88,24 @@ class RosBridge:
         # Get environment state
         state = []
         target = copy.deepcopy(self.target)
-        mir_pose = copy.deepcopy(self.mir_pose)
-        mir_twist = copy.deepcopy(self.mir_twist)
-        mir_f_scan = copy.deepcopy(self.f_scan)
-        mir_b_scan = copy.deepcopy(self.b_scan)
-        in_collision = copy.deepcopy(self.collision)
-        obstacles = [0.0] * 9
+        queenie_pose = copy.deepcopy(self.queenie_pose)
+        visible_handle_points = copy.deepcopy(self.visible_handle_points)
+        queenie_twist = copy.deepcopy(self.queenie_twist)
+        relative_twist = copy.deepcopy(self.relative_twist)
+        in_contact = copy.deepcopy(self.in_contact)
+        object_to_manipulate = [0.0] * 3
 
         self.get_state_event.set()
 
         # Create and fill State message
         msg = robot_server_pb2.State()
         msg.state.extend(target)
-        msg.state.extend(mir_pose)
-        msg.state.extend(mir_twist)
-        msg.state.extend(mir_f_scan)
-        msg.state.extend(mir_b_scan)
-        msg.state.extend([in_collision])
-        msg.state.extend(obstacles)
+        msg.state.extend(queenie_pose)
+        msg.state.extend(visible_handle_points)
+        msg.state.extend(queenie_twist)
+        msg.state.extend(relative_twist)
+        msg.state.extend([in_contact])
+        msg.state.extend(object_to_manipulate)
         msg.success = 1
         
         return msg
@@ -129,14 +127,11 @@ class RosBridge:
 
         if not self.real_robot :
             # Set Gazebo Robot Model state
-            self.set_model_state('mir', copy.deepcopy(state[3:6]))
+            self.set_model_state('queenie', copy.deepcopy(state[3:6]))
             # Set Gazebo Target Model state
             self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
-            if (len(state) > 1021):
-                self.set_model_state('obstacle_0', copy.deepcopy(state[1021:1024]))
-                self.set_model_state('obstacle_1', copy.deepcopy(state[1024:1027]))
-                self.set_model_state('obstacle_2', copy.deepcopy(state[1027:1030]))
+            self.set_model_state('large_cuboid', copy.deepcopy(state[16:19]))
 
         # Set reset Event
         self.reset.set()
