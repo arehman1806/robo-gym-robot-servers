@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
+from std_msgs.msg import Float64, Int16, Bool, Float64MultiArray
 from geometry_msgs.msg import Twist, Pose, Pose2D, PoseStamped
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ModelState, ContactsState
@@ -20,6 +21,8 @@ class RosBridge:
 
     def __init__(self, real_robot=False):
 
+        self.laserlen = 133
+
         # Event is clear while initialization or set_state is going on
         self.reset = Event()
         self.reset.clear()
@@ -37,39 +40,36 @@ class RosBridge:
         if self.real_robot:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
         else:
-            rospy.Subscriber('odom_comb', Odometry, self.callbackOdometry, queue_size=1)
+            rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
 
-        rospy.Subscriber('b_scan', LaserScan, self.LaserScanBack_callback)
-        rospy.Subscriber('f_scan', LaserScan, self.LaserScanFront_callback)
-        rospy.Subscriber('mir_collision', ContactsState, self.collision_callback)
+        # subscribers
+
+        # rospy.Subscriber('b_scan', LaserScan, self.LaserScanBack_callback)
+        # rospy.Subscriber('f_scan', LaserScan, self.LaserScanFront_callback)
+        rospy.Subscriber('left_finger_contact', Bool, self.left_finger_contact_callback)
+        rospy.Subscriber('right_finger_contact', Bool, self.right_finger_contact_callback)
+        rospy.Subscriber('min_distance_to_handle', Float64, self.min_distance_to_handle_callback)
+        rospy.Subscriber('angle_to_handle', Float64, self.angle_to_handle_callback)
+        rospy.Subscriber('handle_pc_count', Float64, self.handle_pc_count_callback)
+        rospy.Subscriber('camera/processed_laser_scan', Float64MultiArray, self.laser_scan_callback)
+        rospy.Subscriber('robot_pose', Pose, self.callbackState, queue_size=1)
 
         self.target = [0.0] * 3
         self.queenie_pose = [0.0] * 3
-        self.visible_handle_points = [0.0]
         self.queenie_twist = [0.0] * 2
-        self.relative_twist = [0.0] * 6
-        self.in_contact = False
-        self.obstacle_to_manipulate = [0.0] * 3
+        self.visible_handle_points = [0.0]
+        self.min_distance_to_handle = [0.0]
+        self.angle_to_handle = [0.0]
+        self.laser_scan = [0.0] * self.laserlen
+
+        # will extend the state as and when required:
+        # self.left_finger_contact = [False]
+        # self.right_finger_contact = [False]
+        # self.relative_twist = [0.0] * 6
+        # self.obstacle_to_manipulate = [0.0] * 3
 
         # Reference frame for Path
         self.path_frame = 'map'
-
-        if self.real_robot:
-            self.path_frame = 'world'
-
-            # Apply transform to center the robot, with real_robot we use World frame,
-            # World is the Map frame translated in XY to center robot
-            tfBuffer = tf2_ros.Buffer()
-            listener = tf2_ros.TransformListener(tfBuffer)
-
-            trans = tfBuffer.lookup_transform('world', 'map', rospy.Time(), rospy.Duration(1.0))
-            v = PyKDL.Vector(trans.transform.translation.x,
-                             trans.transform.translation.y, trans.transform.translation.z)
-            r = PyKDL.Rotation.Quaternion(trans.transform.rotation.x, trans.transform.rotation.y,
-                                          trans.transform.rotation.z, trans.transform.rotation.w)
-            self.world_to_map = PyKDL.Frame(r, v)
-
-        rospy.Subscriber('robot_pose', Pose, self.callbackState, queue_size=1)
 
         # Initialize Path
         self.mir_path = Path()
@@ -91,9 +91,9 @@ class RosBridge:
         queenie_pose = copy.deepcopy(self.queenie_pose)
         visible_handle_points = copy.deepcopy(self.visible_handle_points)
         queenie_twist = copy.deepcopy(self.queenie_twist)
-        relative_twist = copy.deepcopy(self.relative_twist)
-        in_contact = copy.deepcopy(self.in_contact)
-        object_to_manipulate = [0.0] * 3
+        min_distance_to_handle = copy.deepcopy(self.min_distance_to_handle)
+        angle_to_handle = copy.deepcopy(self.angle_to_handle)
+        laser_scan = copy.deepcopy(self.laser_scan)
 
         self.get_state_event.set()
 
@@ -101,11 +101,11 @@ class RosBridge:
         msg = robot_server_pb2.State()
         msg.state.extend(target)
         msg.state.extend(queenie_pose)
-        msg.state.extend(visible_handle_points)
         msg.state.extend(queenie_twist)
-        msg.state.extend(relative_twist)
-        msg.state.extend([in_contact])
-        msg.state.extend(object_to_manipulate)
+        msg.state.extend(visible_handle_points)
+        msg.state.extend(min_distance_to_handle)
+        msg.state.extend(angle_to_handle)
+        msg.state.extend(laser_scan)
         msg.success = 1
         
         return msg
@@ -143,10 +143,10 @@ class RosBridge:
         return 1
 
     def publish_env_cmd_vel(self, lin_vel, ang_vel):
-        if (not self.safe_to_move_back) or (not self.safe_to_move_front):
-            # If it is not safe to move overwrite velocities and stop robot
-            rospy.sleep(0.07)
-            return 0.0, 0.0
+        # if (not self.safe_to_move_back) or (not self.safe_to_move_front):
+        #     # If it is not safe to move overwrite velocities and stop robot
+        #     rospy.sleep(0.07)
+        #     return 0.0, 0.0
         msg = Twist()
         msg.linear.x = lin_vel
         msg.angular.z = ang_vel
@@ -155,13 +155,7 @@ class RosBridge:
         rospy.sleep(0.07)
         return lin_vel, ang_vel
 
-    def odometry_callback(self, data):
-        # Save robot velocities from Odometry internally
-        self.robot_twist = data.twist.twist
-
-    def get_robot_state(self):
-        # method to get robot position from real mir
-        return self.robot_pose.x, self.robot_pose.y, self.robot_pose.theta, self.robot_twist.linear.x, self.robot_twist.linear.y, self.robot_twist.angular.z
+    
 
     def set_model_state(self, model_name, state):
         # Set Gazebo Model State
@@ -187,6 +181,73 @@ class RosBridge:
         except rospy.ServiceException as e:
             print("Service call failed:" + e)
 
+    def min_distance_to_handle_callback(self, data):
+        self.min_distance_to_handle = [data.data]
+
+    def angle_to_handle_callback(self, data):
+        self.angle_to_handle = [data.data]
+        
+
+    def handle_pc_count_callback(self, data: Float64):
+        self.visible_handle_points = [data.data]
+    
+    def laser_scan_callback(self, data: Float64MultiArray):
+        if self.get_state_event.isSet():
+            self.laser_scan = copy.deepcopy(list(data.data))
+        else:
+            pass
+
+    
+    def callbackOdometry(self, data):
+        lin_vel = data.twist.twist.linear.x
+        ang_vel = data.twist.twist.angular.z
+
+        # Update internal Twist variable
+        self.queenie_twist = copy.deepcopy([lin_vel, ang_vel])
+
+    def callbackState(self,data):
+        # If state is not being reset proceed otherwise skip callback
+        if self.reset.isSet():
+            # if self.real_robot:
+            #     # Convert Pose from relative to Map to relative to World frame
+            #     f_r_in_map = posemath.fromMsg(data)
+            #     f_r_in_world = self.world_to_map * f_r_in_map
+            #     data = posemath.toMsg(f_r_in_world)
+
+            x = data.position.x
+            y = data.position.y
+
+            orientation = PyKDL.Rotation.Quaternion(data.orientation.x,
+                                                 data.orientation.y,
+                                                 data.orientation.z,
+                                                 data.orientation.w)
+
+            euler_orientation = orientation.GetRPY()
+            yaw = euler_orientation[2]
+
+            # # Append Pose to Path
+            # stamped_mir_pose = PoseStamped()
+            # stamped_mir_pose.pose = data
+            # stamped_mir_pose.header.stamp = rospy.Time.now()
+            # stamped_mir_pose.header.frame_id = self.path_frame
+            # self.mir_path.poses.append(stamped_mir_pose)
+            # self.mir_exec_path.publish(self.mir_path)
+
+            # Update internal Pose variable
+            self.queenie_pose = copy.deepcopy([x, y, yaw])
+        else:
+            pass
+    
+    
+    def left_finger_contact_callback(self, data):
+        pass
+    
+    def right_finger_contact_callback(self, data):
+        pass
+
+#=========================================================================================================================#
+
+    # NOT IN USE ATM
     def publish_target_marker(self, target_pose):
         # Publish Target RViz Marker
         t_marker = Marker()
@@ -214,46 +275,15 @@ class RosBridge:
         t_marker.color.b = 0.0
         self.target_pub.publish(t_marker)
 
-    def callbackState(self,data):
-        # If state is not being reset proceed otherwise skip callback
-        if self.reset.isSet():
-            if self.real_robot:
-                # Convert Pose from relative to Map to relative to World frame
-                f_r_in_map = posemath.fromMsg(data)
-                f_r_in_world = self.world_to_map * f_r_in_map
-                data = posemath.toMsg(f_r_in_world)
+    # NOT IN USE ATM
+    def odometry_callback(self, data):
+        # Save robot velocities from Odometry internally
+        self.robot_twist = data.twist.twist
 
-            x = data.position.x
-            y = data.position.y
-
-            orientation = PyKDL.Rotation.Quaternion(data.orientation.x,
-                                                 data.orientation.y,
-                                                 data.orientation.z,
-                                                 data.orientation.w)
-
-            euler_orientation = orientation.GetRPY()
-            yaw = euler_orientation[2]
-
-            # Append Pose to Path
-            stamped_mir_pose = PoseStamped()
-            stamped_mir_pose.pose = data
-            stamped_mir_pose.header.stamp = rospy.Time.now()
-            stamped_mir_pose.header.frame_id = self.path_frame
-            self.mir_path.poses.append(stamped_mir_pose)
-            self.mir_exec_path.publish(self.mir_path)
-
-            # Update internal Pose variable
-            self.mir_pose = copy.deepcopy([x, y, yaw])
-        else:
-            pass
-
-    def callbackOdometry(self, data):
-        lin_vel = data.twist.twist.linear.x
-        ang_vel = data.twist.twist.angular.z
-
-        # Update internal Twist variable
-        self.mir_twist = copy.deepcopy([lin_vel, ang_vel])
-
+    # NOT IN USE ATM
+    def get_robot_state(self):
+        # method to get robot position from real mir
+        return self.robot_pose.x, self.robot_pose.y, self.robot_pose.theta, self.robot_twist.linear.x, self.robot_twist.linear.y, self.robot_twist.angular.z
     def LaserScanBack_callback(self, data):
         if self.get_state_event.isSet():
             scan = data.ranges
