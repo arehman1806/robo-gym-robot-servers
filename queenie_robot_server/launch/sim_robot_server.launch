@@ -12,7 +12,7 @@
   <arg name="robot_yaw" default="0.0"/>
 
   <!-- spawn robot and bring up controllers etc. -->
-  <include file="$(find queenie)/src/launch/world.launch">
+  <include file="$(find queenie)/src/launch/perception_world.launch">
     <!-- <arg name="robot_x"     value="$(arg robot_x)"/>
     <arg name="robot_y"     value="$(arg robot_y)"/>
     <arg name="robot_yaw"   value="$(arg robot_yaw)"/>

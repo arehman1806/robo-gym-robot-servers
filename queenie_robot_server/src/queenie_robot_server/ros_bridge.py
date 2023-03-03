@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
 import rospy
-from std_msgs.msg import Float64, Int16, Bool, Float64MultiArray
+from std_msgs.msg import Float32, Int16, Bool, Float64MultiArray
 from geometry_msgs.msg import Twist, Pose, Pose2D, PoseStamped
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ModelState, ContactsState
 from gazebo_msgs.srv import GetModelState, SetModelState
 from visualization_msgs.msg import Marker
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Image
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from std_msgs.msg import Header
 from nav_msgs.msg import Path
 import PyKDL
 import tf2_ros
@@ -16,10 +18,22 @@ from tf_conversions import posemath
 from threading import Event
 import numpy as np
 from robo_gym_server_modules.robot_server.grpc_msgs.python import robot_server_pb2
+from cv_bridge import CvBridge, CvBridgeError
 
 class RosBridge:
 
     def __init__(self, real_robot=False):
+
+        traj_publisher = rospy.Publisher('/queenie/head_controller/command', JointTrajectory, queue_size=1)
+        for _ in range(0, 10):
+            msg = JointTrajectory()
+            msg.joint_names = ["neck", "palm_riser", "palm_left_finger", "palm_right_finger"]
+            msg.points=[JointTrajectoryPoint()]
+            msg.header =Header()
+            msg.points[0].positions = [0, 0, 0.1, 0.1]
+            msg.points[0].time_from_start = rospy.Duration.from_sec(0.1)
+            traj_publisher.publish(msg)
+            rospy.sleep(1)
 
         self.laserlen = 133
 
@@ -28,6 +42,8 @@ class RosBridge:
         self.reset.clear()
         self.get_state_event = Event()
         self.get_state_event.set()
+
+        self.bridge = CvBridge()
 
         self.real_robot = real_robot
         # cmd_vel_command_handler publisher
@@ -43,24 +59,27 @@ class RosBridge:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
 
         # subscribers
-
-        # rospy.Subscriber('b_scan', LaserScan, self.LaserScanBack_callback)
-        # rospy.Subscriber('f_scan', LaserScan, self.LaserScanFront_callback)
         rospy.Subscriber('left_finger_contact', Bool, self.left_finger_contact_callback)
         rospy.Subscriber('right_finger_contact', Bool, self.right_finger_contact_callback)
-        rospy.Subscriber('min_distance_to_handle', Float64, self.min_distance_to_handle_callback)
-        rospy.Subscriber('angle_to_handle', Float64, self.angle_to_handle_callback)
-        rospy.Subscriber('handle_pc_count', Float64, self.handle_pc_count_callback)
-        rospy.Subscriber('camera/processed_laser_scan', Float64MultiArray, self.laser_scan_callback)
+        rospy.Subscriber('palm_contact', Bool, self.palm_contact_callback)
+        rospy.Subscriber('min_distance_to_handle', Float32, self.min_distance_to_handle_callback)
+        rospy.Subscriber('angle_to_handle', Float32, self.angle_to_handle_callback)
+        rospy.Subscriber('handle_pc_count', Float32, self.handle_pc_count_callback)
+        # rospy.Subscriber('camera/processed_laser_scan', Float64MultiArray, self.laser_scan_callback)
         rospy.Subscriber('robot_pose', Pose, self.callbackState, queue_size=1)
+        rospy.Subscriber('camera/color/image_raw', Image, self.rgb_image_callback)
+        
 
         self.target = [0.0] * 3
         self.queenie_pose = [0.0] * 3
+        self.object_pose = [0.0] * 3
         self.queenie_twist = [0.0] * 2
-        self.visible_handle_points = [0.0]
-        self.min_distance_to_handle = [0.0]
+        self.min_distance_to_handle = [21.0]
         self.angle_to_handle = [0.0]
-        self.laser_scan = [0.0] * self.laserlen
+        self.left_finger_contact = [0.0]
+        self.right_finger_contact = [0.0]
+        self.palm_contact = [0.0]
+        self.camera_image = [0] * 64*64*3
 
         # will extend the state as and when required:
         # self.left_finger_contact = [False]
@@ -89,11 +108,15 @@ class RosBridge:
         state = []
         target = copy.deepcopy(self.target)
         queenie_pose = copy.deepcopy(self.queenie_pose)
-        visible_handle_points = copy.deepcopy(self.visible_handle_points)
+        object_pose = copy.deepcopy(self.object_pose)
         queenie_twist = copy.deepcopy(self.queenie_twist)
         min_distance_to_handle = copy.deepcopy(self.min_distance_to_handle)
         angle_to_handle = copy.deepcopy(self.angle_to_handle)
-        laser_scan = copy.deepcopy(self.laser_scan)
+        # laser_scan = copy.deepcopy(self.laser_scan)
+        left_finger_contact = copy.deepcopy(self.left_finger_contact)
+        right_finger_contact = copy.deepcopy(self.right_finger_contact)
+        palm_contact = copy.deepcopy(self.palm_contact)
+        camera_image = copy.deepcopy(self.camera_image)
 
         self.get_state_event.set()
 
@@ -101,11 +124,16 @@ class RosBridge:
         msg = robot_server_pb2.State()
         msg.state.extend(target)
         msg.state.extend(queenie_pose)
+        msg.state.extend(object_pose)
         msg.state.extend(queenie_twist)
-        msg.state.extend(visible_handle_points)
+        # msg.state.extend(visible_handle_points)
         msg.state.extend(min_distance_to_handle)
         msg.state.extend(angle_to_handle)
-        msg.state.extend(laser_scan)
+        # msg.state.extend(laser_scan)
+        msg.state.extend(left_finger_contact)
+        msg.state.extend(right_finger_contact)
+        msg.state.extend(palm_contact)
+        msg.state.extend(camera_image)
         msg.success = 1
         
         return msg
@@ -116,22 +144,22 @@ class RosBridge:
         # Clear reset Event
         self.reset.clear()
         # Re-initialize Path
-        self.mir_path = Path()
-        self.mir_path.header.stamp = rospy.Time.now()
-        self.mir_path.header.frame_id = self.path_frame
+        # self.mir_path = Path()
+        # self.mir_path.header.stamp = rospy.Time.now()
+        # self.mir_path.header.frame_id = self.path_frame
 
         # Set target internal value
         self.target = copy.deepcopy(state[0:3])
         # Publish Target Marker
-        self.publish_target_marker(self.target)
+        # self.publish_target_marker(self.target)
 
         if not self.real_robot :
             # Set Gazebo Robot Model state
             self.set_model_state('queenie', copy.deepcopy(state[3:6]))
             # Set Gazebo Target Model state
-            self.set_model_state('target', copy.deepcopy(state[0:3]))
+            # self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
-            self.set_model_state('large_cuboid', copy.deepcopy(state[16:19]))
+            self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
 
         # Set reset Event
         self.reset.set()
@@ -188,7 +216,7 @@ class RosBridge:
         self.angle_to_handle = [data.data]
         
 
-    def handle_pc_count_callback(self, data: Float64):
+    def handle_pc_count_callback(self, data):
         self.visible_handle_points = [data.data]
     
     def laser_scan_callback(self, data: Float64MultiArray):
@@ -225,13 +253,6 @@ class RosBridge:
             euler_orientation = orientation.GetRPY()
             yaw = euler_orientation[2]
 
-            # # Append Pose to Path
-            # stamped_mir_pose = PoseStamped()
-            # stamped_mir_pose.pose = data
-            # stamped_mir_pose.header.stamp = rospy.Time.now()
-            # stamped_mir_pose.header.frame_id = self.path_frame
-            # self.mir_path.poses.append(stamped_mir_pose)
-            # self.mir_exec_path.publish(self.mir_path)
 
             # Update internal Pose variable
             self.queenie_pose = copy.deepcopy([x, y, yaw])
@@ -240,10 +261,26 @@ class RosBridge:
     
     
     def left_finger_contact_callback(self, data):
-        pass
+        self.left_finger_contact = copy.deepcopy([data.data])
     
     def right_finger_contact_callback(self, data):
-        pass
+        self.right_finger_contact = copy.deepcopy([data.data])
+    
+    def palm_contact_callback(self, data):
+        self.palm_contact = copy.deepcopy([data.data])
+
+    def rgb_image_callback(self, data):
+        if self.reset.isSet():
+            try:
+                # Convert ROS image to OpenCV format
+                cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+                cv_image = np.transpose(cv_image, (2, 0, 1))
+
+            except CvBridgeError as e:
+                print(e)
+                return
+            self.camera_image = cv_image.flatten()
+        
 
 #=========================================================================================================================#
 
