@@ -19,21 +19,42 @@ from threading import Event
 import numpy as np
 from robo_gym_server_modules.robot_server.grpc_msgs.python import robot_server_pb2
 from cv_bridge import CvBridge, CvBridgeError
+import roslib
+roslib.load_manifest("queenie")
+import actionlib
+from queenie.msg import ExploreAction, ExploreGoal
+import cv2
 
 class RosBridge:
 
     def __init__(self, real_robot=False):
 
+        self.camera_mode = "GD" # POSSIBLE VALUES INCLUDE RGB, D, GD
+
+        if self.camera_mode == "GD":
+            self.camera_image_dim = 84*84*2
+        elif self.camera_mode == "RGB":
+            self.camera_image_dim = 84*84*3
+        elif self.camera_image_dim == "RGBD":
+            self.camera_image_dim = 84*84*4
+
         traj_publisher = rospy.Publisher('/queenie/head_controller/command', JointTrajectory, queue_size=1)
+        gripper_command_pub = rospy.Publisher('/queenie/gripper_controller/command', Float64MultiArray, queue_size=1)
         for _ in range(0, 10):
             msg = JointTrajectory()
-            msg.joint_names = ["neck", "palm_riser", "palm_left_finger", "palm_right_finger"]
+            msg.joint_names = ["neck", "palm_riser"]
             msg.points=[JointTrajectoryPoint()]
             msg.header =Header()
-            msg.points[0].positions = [0, 0, 0.1, 0.1]
+            msg.points[0].positions = [0, 0]
             msg.points[0].time_from_start = rospy.Duration.from_sec(0.1)
             traj_publisher.publish(msg)
             rospy.sleep(1)
+        gripper_msg = Float64MultiArray()
+        gripper_msg.data = [5,5]
+        for _ in range(3):
+            gripper_command_pub.publish(gripper_msg)
+            rospy.sleep(0.5)
+
 
         self.laserlen = 133
 
@@ -58,6 +79,10 @@ class RosBridge:
         else:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
 
+        # action server clients
+        self.explore_client = actionlib.SimpleActionClient("explore", ExploreAction)
+        self.explore_client.wait_for_server()
+
         # subscribers
         rospy.Subscriber('left_finger_contact', Bool, self.left_finger_contact_callback)
         rospy.Subscriber('right_finger_contact', Bool, self.right_finger_contact_callback)
@@ -79,7 +104,7 @@ class RosBridge:
         self.left_finger_contact = [0.0]
         self.right_finger_contact = [0.0]
         self.palm_contact = [0.0]
-        self.camera_image = [0] * 64*64*3
+        self.camera_image = [0] * self.camera_image_dim
 
         # will extend the state as and when required:
         # self.left_finger_contact = [False]
@@ -143,15 +168,9 @@ class RosBridge:
         state = state_msg.state
         # Clear reset Event
         self.reset.clear()
-        # Re-initialize Path
-        # self.mir_path = Path()
-        # self.mir_path.header.stamp = rospy.Time.now()
-        # self.mir_path.header.frame_id = self.path_frame
 
         # Set target internal value
         self.target = copy.deepcopy(state[0:3])
-        # Publish Target Marker
-        # self.publish_target_marker(self.target)
 
         if not self.real_robot :
             # Set Gazebo Robot Model state
@@ -159,7 +178,31 @@ class RosBridge:
             # Set Gazebo Target Model state
             # self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
-            self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
+            
+            if self.target[0] == -1:
+                self.set_model_state('large_cuboid_title_handle', copy.deepcopy(state[6:9]))
+                rospy.sleep(0.5)
+
+
+            elif self.target[0] == 1:
+                
+                self.set_model_state('large_cuboid_2', [-40,40,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid_3', [-40,50,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
+            elif self.target[0] == 2:
+                self.set_model_state('large_cuboid', [-40,-40,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid_3', [-40,50,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid_2', copy.deepcopy(state[6:9]))
+            elif self.target[0] == 3:
+                self.set_model_state('large_cuboid', [-40,-40,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid_2',[-40,40,0])
+                rospy.sleep(0.5)
+                self.set_model_state('large_cuboid_3', copy.deepcopy(state[6:9]))
 
         # Set reset Event
         self.reset.set()
@@ -182,6 +225,12 @@ class RosBridge:
         # Sleep time set manually to achieve approximately 10Hz rate
         rospy.sleep(0.07)
         return lin_vel, ang_vel
+
+    def send_explore_goal(self):
+        goal = ExploreGoal()
+        self.explore_client.send_goal(goal)
+        self.explore_client.wait_for_result()
+        return self.explore_client.get_result()
 
     
 
@@ -213,7 +262,7 @@ class RosBridge:
         self.min_distance_to_handle = [data.data]
 
     def angle_to_handle_callback(self, data):
-        self.angle_to_handle = [data.data]
+        self.angle_to_handle = [data.data - np.pi/2]
         
 
     def handle_pc_count_callback(self, data):
@@ -236,12 +285,6 @@ class RosBridge:
     def callbackState(self,data):
         # If state is not being reset proceed otherwise skip callback
         if self.reset.isSet():
-            # if self.real_robot:
-            #     # Convert Pose from relative to Map to relative to World frame
-            #     f_r_in_map = posemath.fromMsg(data)
-            #     f_r_in_world = self.world_to_map * f_r_in_map
-            #     data = posemath.toMsg(f_r_in_world)
-
             x = data.position.x
             y = data.position.y
 
@@ -279,6 +322,8 @@ class RosBridge:
             except CvBridgeError as e:
                 print(e)
                 return
+            if self.camera_mode == "GD":
+                cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
             self.camera_image = cv_image.flatten()
         
 

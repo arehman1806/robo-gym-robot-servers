@@ -30,11 +30,18 @@ class RobotServerServicer(robot_server_pb2_grpc.RobotServerServicer):
             return robot_server_pb2.Success(success=0)
 
     def SendAction(self, request, context):
+        success = 0
         try:
-            lin_vel, ang_vel = self.rosbridge.publish_env_cmd_vel(request.action[0], request.action[1])
-            return robot_server_pb2.Success(success=1)
+            if request.action[0] == -999:
+                handle_in_sight = self.rosbridge.send_explore_goal()
+                if handle_in_sight:
+                    success = 1
+            else:
+                lin_vel, ang_vel = self.rosbridge.publish_env_cmd_vel(request.action[0], request.action[1])
+                success = 1
+            return robot_server_pb2.Success(success=success)
         except:
-            return robot_server_pb2.Success(success=0)
+            return robot_server_pb2.Success(success=success)
 
 
 def serve():
