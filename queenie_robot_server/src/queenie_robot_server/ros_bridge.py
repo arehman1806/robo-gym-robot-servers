@@ -32,11 +32,11 @@ class RosBridge:
         self.camera_mode = "GD" # POSSIBLE VALUES INCLUDE RGB, D, GD
 
         if self.camera_mode == "GD":
-            self.camera_image_dim = 84*84*2
+            self.camera_image_dim = 84*84*1
         elif self.camera_mode == "RGB":
             self.camera_image_dim = 84*84*3
         elif self.camera_image_dim == "RGBD":
-            self.camera_image_dim = 84*84*4
+            self.camera_image_dim = 84*84*3
 
         traj_publisher = rospy.Publisher('/queenie/head_controller/command', JointTrajectory, queue_size=1)
         gripper_command_pub = rospy.Publisher('/queenie/gripper_controller/command', Float64MultiArray, queue_size=1)
