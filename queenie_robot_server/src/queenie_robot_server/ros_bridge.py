@@ -29,7 +29,7 @@ class RosBridge:
 
     def __init__(self, real_robot=False):
 
-        self.camera_mode = "GD" # POSSIBLE VALUES INCLUDE RGB, D, GD
+        self.camera_mode = "RGB" # POSSIBLE VALUES INCLUDE RGB, D, GD
 
         if self.camera_mode == "GD":
             self.camera_image_dim = 84*84*1
