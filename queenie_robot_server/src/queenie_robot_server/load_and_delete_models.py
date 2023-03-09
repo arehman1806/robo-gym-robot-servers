@@ -36,6 +36,7 @@ class QueenieGraspObjectSetManager(object):
         return sdf
 
     def load_model(self, model_id, x=0, y=0, yaw=0):
+        model_id = int(model_id)
         if self.loaded_model_name is not None:
             self.delete_model(self.loaded_model_name)
             rospy.sleep(5)

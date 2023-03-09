@@ -25,6 +25,8 @@ import actionlib
 from queenie.msg import ExploreAction, ExploreGoal
 import cv2
 from control_msgs.msg import JointTrajectoryControllerState
+from queenie_robot_server.objects import object_locations
+from queenie_robot_server.load_and_delete_models import QueenieGraspObjectSetManager
 
 class RosBridge:
 
@@ -59,6 +61,8 @@ class RosBridge:
 
         self.bridge = CvBridge()
 
+        self.object_manager = QueenieGraspObjectSetManager()
+
         self.real_robot = real_robot
         # cmd_vel_command_handler publisher
         self.env_cmd_vel_pub = rospy.Publisher('env_cmd_vel', Twist, queue_size=1)
@@ -71,6 +75,8 @@ class RosBridge:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
         else:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
+
+        self.current_object_in_view = "object_0"
 
         # action server clients
         self.explore_client = actionlib.SimpleActionClient("explore", ExploreAction)
@@ -88,7 +94,8 @@ class RosBridge:
         rospy.Subscriber('camera/color/image_raw', Image, self.rgb_image_callback)
         rospy.Subscriber("queenie/head_controller/state", JointTrajectoryControllerState, self.on_joint_states)
         gripper_msg = Float64MultiArray()
-        gripper_msg.data = [5,5]
+        gripper_msg.data = [20,20]
+        rospy.sleep(3)
         for _ in range(3):
             gripper_command_pub.publish(gripper_msg)
             rospy.sleep(0.5)
@@ -134,6 +141,7 @@ class RosBridge:
         # Flag indicating if it is safe to move forward
         self.safe_to_move_front = True
         self.rate = rospy.Rate(10)  # 30Hz
+        # self.set_initial_model_states()
         self.reset.set()
 
     def get_state(self):
@@ -187,31 +195,35 @@ class RosBridge:
             # Set Gazebo Target Model state
             # self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
+            rospy.loginfo("calling load modell")
+            self.object_manager.load_model(self.target[1], state[6], state[7], state[8])
+            print(state)
+
+            # self.relocate_models(self.target[1], copy.deepcopy(state[6:9]))
             
-            if self.target[0] == -1:
-                self.set_model_state('large_cuboid_tilted_handle', copy.deepcopy(state[6:9]))
-                rospy.sleep(0.5)
+            # if self.target[0] == -1:
+            #     self.set_model_state('large_cuboid_tilted_handle', copy.deepcopy(state[6:9]))
 
 
-            elif self.target[0] == 1:
+            # elif self.target[0] == 1:
                 
-                self.set_model_state('large_cuboid_2', [-40,40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', [-40,50,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
-            elif self.target[0] == 2:
-                self.set_model_state('large_cuboid', [-40,-40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', [-40,50,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_2', copy.deepcopy(state[6:9]))
-            elif self.target[0] == 3:
-                self.set_model_state('large_cuboid', [-40,-40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_2',[-40,40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', copy.deepcopy(state[6:9]))
+            #     self.set_model_state('large_cuboid_2', [-40,40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', [-40,50,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
+            # elif self.target[0] == 2:
+            #     self.set_model_state('large_cuboid', [-40,-40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', [-40,50,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_2', copy.deepcopy(state[6:9]))
+            # elif self.target[0] == 3:
+            #     self.set_model_state('large_cuboid', [-40,-40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_2',[-40,40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', copy.deepcopy(state[6:9]))
 
         # Set reset Event
         self.reset.set()
@@ -222,6 +234,8 @@ class RosBridge:
 
         return 1
 
+    
+    
     def publish_env_arm_delta_cmd(self, delta_cmd):
         msg = JointTrajectory()
         msg.header = Header()
