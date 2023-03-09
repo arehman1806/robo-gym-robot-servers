@@ -32,6 +32,9 @@
   <node name="cmd_vel_command_handler" pkg="queenie_robot_server" type="cmd_vel_command_handler.py" respawn="false" output="screen">
     <param name="action_cycle_rate" value="10"></param>
   </node>
+  <node name="joint_trajectory_command_handler" pkg="queenie_robot_server" type="env_arm_command.py" respawn="false" output="screen">
+    <param name="action_cycle_rate" value="10"></param>
+  </node>
 
   <!-- Launch RViz -->
   <!-- <node if="$(arg gui)" name="$(anon rviz)" pkg="rviz" type="rviz" respawn="false"

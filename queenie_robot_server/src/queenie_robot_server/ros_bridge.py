@@ -24,6 +24,9 @@ roslib.load_manifest("queenie")
 import actionlib
 from queenie.msg import ExploreAction, ExploreGoal
 import cv2
+from control_msgs.msg import JointTrajectoryControllerState
+from queenie_robot_server.objects import object_locations
+from queenie_robot_server.load_and_delete_models import QueenieGraspObjectSetManager
 
 class RosBridge:
 
@@ -38,22 +41,14 @@ class RosBridge:
         elif self.camera_image_dim == "RGBD":
             self.camera_image_dim = 84*84*3
 
+        self.joint_names = ["neck", "neck_x"]
+        self.joint_position = dict.fromkeys(self.joint_names, 0.0)
+
         traj_publisher = rospy.Publisher('/queenie/head_controller/command', JointTrajectory, queue_size=1)
         gripper_command_pub = rospy.Publisher('/queenie/gripper_controller/command', Float64MultiArray, queue_size=1)
-        for _ in range(0, 10):
-            msg = JointTrajectory()
-            msg.joint_names = ["neck", "palm_riser"]
-            msg.points=[JointTrajectoryPoint()]
-            msg.header =Header()
-            msg.points[0].positions = [0, 0]
-            msg.points[0].time_from_start = rospy.Duration.from_sec(0.1)
-            traj_publisher.publish(msg)
-            rospy.sleep(1)
-        gripper_msg = Float64MultiArray()
-        gripper_msg.data = [5,5]
-        for _ in range(3):
-            gripper_command_pub.publish(gripper_msg)
-            rospy.sleep(0.5)
+        self.arm_cmd_pub = rospy.Publisher('env_arm_command', JointTrajectory, queue_size=1) # joint_trajectory_command_handler publishe
+
+        
 
 
         self.laserlen = 133
@@ -65,6 +60,8 @@ class RosBridge:
         self.get_state_event.set()
 
         self.bridge = CvBridge()
+
+        self.object_manager = QueenieGraspObjectSetManager()
 
         self.real_robot = real_robot
         # cmd_vel_command_handler publisher
@@ -78,6 +75,8 @@ class RosBridge:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
         else:
             rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
+
+        self.current_object_in_view = "object_0"
 
         # action server clients
         self.explore_client = actionlib.SimpleActionClient("explore", ExploreAction)
@@ -93,6 +92,22 @@ class RosBridge:
         # rospy.Subscriber('camera/processed_laser_scan', Float64MultiArray, self.laser_scan_callback)
         rospy.Subscriber('robot_pose', Pose, self.callbackState, queue_size=1)
         rospy.Subscriber('camera/color/image_raw', Image, self.rgb_image_callback)
+        rospy.Subscriber("queenie/head_controller/state", JointTrajectoryControllerState, self.on_joint_states)
+        gripper_msg = Float64MultiArray()
+        gripper_msg.data = [5,5]
+        for _ in range(3):
+            gripper_command_pub.publish(gripper_msg)
+            rospy.sleep(0.5)
+
+        for _ in range(0, 2):
+            msg = JointTrajectory()
+            msg.joint_names = ["neck", "neck_x"]
+            msg.points=[JointTrajectoryPoint()]
+            msg.header =Header()
+            msg.points[0].positions = [0, 0]
+            msg.points[0].time_from_start = rospy.Duration.from_sec(0.1)
+            traj_publisher.publish(msg)
+            rospy.sleep(1)
         
 
         self.target = [0.0] * 3
@@ -125,6 +140,7 @@ class RosBridge:
         # Flag indicating if it is safe to move forward
         self.safe_to_move_front = True
         self.rate = rospy.Rate(10)  # 30Hz
+        # self.set_initial_model_states()
         self.reset.set()
 
     def get_state(self):
@@ -178,31 +194,34 @@ class RosBridge:
             # Set Gazebo Target Model state
             # self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
+
+            self.object_manager.load_model(self.target[1], state[6], state[7], state[8])
+
+            # self.relocate_models(self.target[1], copy.deepcopy(state[6:9]))
             
-            if self.target[0] == -1:
-                self.set_model_state('large_cuboid_title_handle', copy.deepcopy(state[6:9]))
-                rospy.sleep(0.5)
+            # if self.target[0] == -1:
+            #     self.set_model_state('large_cuboid_tilted_handle', copy.deepcopy(state[6:9]))
 
 
-            elif self.target[0] == 1:
+            # elif self.target[0] == 1:
                 
-                self.set_model_state('large_cuboid_2', [-40,40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', [-40,50,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
-            elif self.target[0] == 2:
-                self.set_model_state('large_cuboid', [-40,-40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', [-40,50,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_2', copy.deepcopy(state[6:9]))
-            elif self.target[0] == 3:
-                self.set_model_state('large_cuboid', [-40,-40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_2',[-40,40,0])
-                rospy.sleep(0.5)
-                self.set_model_state('large_cuboid_3', copy.deepcopy(state[6:9]))
+            #     self.set_model_state('large_cuboid_2', [-40,40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', [-40,50,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid', copy.deepcopy(state[6:9]))
+            # elif self.target[0] == 2:
+            #     self.set_model_state('large_cuboid', [-40,-40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', [-40,50,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_2', copy.deepcopy(state[6:9]))
+            # elif self.target[0] == 3:
+            #     self.set_model_state('large_cuboid', [-40,-40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_2',[-40,40,0])
+            #     rospy.sleep(0.5)
+            #     self.set_model_state('large_cuboid_3', copy.deepcopy(state[6:9]))
 
         # Set reset Event
         self.reset.set()
@@ -213,11 +232,31 @@ class RosBridge:
 
         return 1
 
+    
+    
+    def publish_env_arm_delta_cmd(self, delta_cmd):
+        msg = JointTrajectory()
+        msg.header = Header()
+        msg.joint_names = self.joint_names
+        msg.points=[JointTrajectoryPoint()]
+        # msg.points[0].positions = position_cmd
+        position_cmd = []
+        dur = []
+        for idx, name in enumerate(msg.joint_names):
+            pos = self.joint_position[name]
+            cmd = delta_cmd[idx]
+            dur.append(0.1)
+            if name == "neck":
+                position_cmd.append(0)
+            else:
+                position_cmd.append(pos + cmd)
+        msg.points[0].positions = position_cmd
+        msg.points[0].time_from_start = rospy.Duration.from_sec(max(dur))
+        self.arm_cmd_pub.publish(msg)
+        rospy.sleep(0.07)
+        return position_cmd
+    
     def publish_env_cmd_vel(self, lin_vel, ang_vel):
-        # if (not self.safe_to_move_back) or (not self.safe_to_move_front):
-        #     # If it is not safe to move overwrite velocities and stop robot
-        #     rospy.sleep(0.07)
-        #     return 0.0, 0.0
         msg = Twist()
         msg.linear.x = lin_vel
         msg.angular.z = ang_vel
@@ -242,6 +281,7 @@ class RosBridge:
         start_state.model_name = model_name
         start_state.pose.position.x = state[0]
         start_state.pose.position.y = state[1]
+        start_state.pose.position.z = 0.5
         orientation = PyKDL.Rotation.RPY(0,0, state[2])
         start_state.pose.orientation.x, start_state.pose.orientation.y, start_state.pose.orientation.z, start_state.pose.orientation.w = orientation.GetQuaternion()
 
@@ -257,6 +297,15 @@ class RosBridge:
             set_model_state_client(start_state)
         except rospy.ServiceException as e:
             print("Service call failed:" + e)
+    
+    def on_joint_states(self, msg:JointTrajectoryControllerState):
+        if self.reset.isSet():
+            for idx, name in enumerate(msg.joint_names):
+                if name in self.joint_names:
+                    if name == "neck":
+                        self.joint_position[name] = 0
+                    self.joint_position[name] = msg.actual.positions[idx]
+                    # self.joint_velocity[name] = msg.velocity[idx]
 
     def min_distance_to_handle_callback(self, data):
         self.min_distance_to_handle = [data.data]

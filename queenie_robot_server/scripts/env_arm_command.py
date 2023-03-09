@@ -1,68 +1,51 @@
 #!/usr/bin/env python3
 import rospy
-import random
-# from trajectory_msgs.msg import JointTrajectoryPoint, JointTrajectory
-from std_msgs.msg import Float64MultiArray
+from trajectory_msgs.msg import JointTrajectoryPoint, JointTrajectory
 from queue import Queue
 
 class JointTrajectoryCH:
     def __init__(self):
-        rospy.init_node('env_am_commandddd')
+        rospy.init_node('joint_trajectory_command_handler')
         # self.real_robot =  rospy.get_param("~real_robot")
-        self.real_robot = False
         # ac_rate = rospy.get_param("~action_cycle_rate")
-        ac_rate = 10
-        self.rate = rospy.Rate(ac_rate)
-        self.x = 0
+        self.rate = rospy.Rate(10)
 
         # Publisher to JointTrajectory robot controller
-        if self.real_robot:
-            # self.jt_pub = rospy.Publisher('/scaled_pos_traj_controller/command', JointTrajectory, queue_size=10)
-            # self.jt_pub = rospy.Publisher('/pos_traj_controller/command', JointTrajectory, queue_size=10)
+        
+        self.jt_pub = rospy.Publisher('/queenie/head_controller/command', JointTrajectory, queue_size=10)
+
+        # Subscriber to JointTrajectory Command coming from Environment
+        rospy.Subscriber('env_arm_command', JointTrajectory, self.callback_env_joint_trajectory, queue_size=1)
+        self.msg = JointTrajectory()
+        # Queue with maximum size 1
+        self.queue = Queue(maxsize=1)
+        # Flag used to publish empty JointTrajectory message only once when interrupting execution
+        self.stop_flag = False 
+
+    def callback_env_joint_trajectory(self, data):
+        try:
+            # Add to the Queue the next command to execute
+            self.queue.put(data)
+        except:
             pass
-        else:
-            self.jt_pub = rospy.Publisher('/env_arm_command', Float64MultiArray, queue_size=10)
 
     def joint_trajectory_publisher(self):
 
         while not rospy.is_shutdown():
             # If a command from the environment is waiting to be executed,
             # publish the command, otherwise preempt trajectory
-            msg = Float64MultiArray()
-            
-            # if self.x == 0:
-            #      msg.data = [-0, 10, -10, -10]
-            #      self.x = 1
-            # else:
-            #     msg.data = [0.0, 0, 10, 10]
-            #     self.x = 0
-
-            msg = Float64MultiArray()
-            msg.data = [0.6, 0, 10, 10]
-            self.jt_pub.publish(msg)
+            if self.queue.full():
+                self.jt_pub.publish(self.queue.get())
+                self.stop_flag = False 
+            else:
+                # If the empty JointTrajectory message has no been published publish it and
+                # set the stop_flag to True, else pass
+                if not self.stop_flag:
+                    self.jt_pub.publish(JointTrajectory())
+                    self.stop_flag = True 
+                else: 
+                    pass 
             self.rate.sleep()
-
-            msg = Float64MultiArray()
-            msg.data = [0.6, 0.1, 10, 10]
-            self.jt_pub.publish(msg)
-            self.rate.sleep()
-
-            msg = Float64MultiArray()
-            msg.data = [0.6, 0.1, -10, -10]
-            self.jt_pub.publish(msg)
-            self.rate.sleep()
-
-            msg = Float64MultiArray()
-            msg.data = [0.6, 0.2, -10, -10]
-            self.jt_pub.publish(msg)
-            self.rate.sleep()
-
-            msg = Float64MultiArray()
-            msg.data = [-0.6, 0.2, -10, -10]
-            self.jt_pub.publish(msg)
-            self.rate.sleep()
-            
-
 
 
 if __name__ == '__main__':

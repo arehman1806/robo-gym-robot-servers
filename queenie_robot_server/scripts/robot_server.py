@@ -25,8 +25,12 @@ class RobotServerServicer(robot_server_pb2_grpc.RobotServerServicer):
     def SetState(self, request, context):
         try:
             s = self.rosbridge.set_state(state_msg=request)
+            rospy.loginfo("All went well")
+            # rospy.loginfo("exception occured")
             return robot_server_pb2.Success(success=1)
-        except:
+        except Exception as e:
+            rospy.loginfo("yoyoyo exception occured")
+            rospy.loginfo("exception occured")
             return robot_server_pb2.Success(success=0)
 
     def SendAction(self, request, context):
@@ -38,6 +42,10 @@ class RobotServerServicer(robot_server_pb2_grpc.RobotServerServicer):
                     success = 1
             else:
                 lin_vel, ang_vel = self.rosbridge.publish_env_cmd_vel(request.action[0], request.action[1])
+                # if len(request.action) == 3:
+                self.rosbridge.publish_env_arm_delta_cmd([0, request.action[2]])
+                # else:
+                #     self.rosbridge.publish_env_arm_delta_cmd(request.action[2:4])
                 success = 1
             return robot_server_pb2.Success(success=success)
         except:
