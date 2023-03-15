@@ -39,6 +39,7 @@ class QueenieGraspObjectSetManager(object):
         model_id = int(model_id)
         if self.loaded_model_name is not None:
             self.delete_model(self.loaded_model_name)
+            self.loaded_model_name = None
             rospy.sleep(5)
         initial_pose = Pose()
         initial_pose.position.x = x
@@ -47,9 +48,14 @@ class QueenieGraspObjectSetManager(object):
         orientation = PyKDL.Rotation.RPY(0,0, yaw)
         initial_pose.orientation.x, initial_pose.orientation.y, initial_pose.orientation.z, initial_pose.orientation.w = orientation.GetQuaternion()
         # Spawn the model in Gazebo
-        self.spawn_model("object_" + str(model_id), self.models["object_" + str(model_id)], '/', initial_pose, "world")
+        try:
+            self.spawn_model("object_" + str(model_id), self.models["object_" + str(model_id)], '/', initial_pose, "world")
+            self.loaded_model_name = "object_" + str(model_id)
+        except:
+            rospy.sleep(10)
+
         rospy.sleep(5)
-        self.loaded_model_name = "object_" + str(model_id)
+        
 
     def delete_model(self, model_name):
         # Delete the model from Gazebo

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 class stateObj:
         def __init__(self) -> None:
                 self.state = []
@@ -27,11 +29,15 @@ def _get_object_pose():
 x = RosBridge()
 
 # while True:
-x.object_manager.load_model(2)
+# x.object_manager.load_model(2)
 state = [0]*12
 state[6:9] = [0.5,0.5, 0.5]
 a = stateObj()
 a.state = state
+x.set_state(a)
+a.state[1] = 1
+x.set_state(a)
+a.state[1] = 2
 x.set_state(a)
 # while True:
         # result = x.send_explore_goal()

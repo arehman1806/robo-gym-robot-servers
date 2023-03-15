@@ -41,10 +41,11 @@ class RobotServerServicer(robot_server_pb2_grpc.RobotServerServicer):
                 if handle_in_sight:
                     success = 1
             else:
-                lin_vel, ang_vel = self.rosbridge.publish_env_cmd_vel(request.action[0], request.action[1])
-                # if len(request.action) == 3:
-                self.rosbridge.publish_env_arm_delta_cmd([0, request.action[2]])
-                # else:
+                self.rosbridge.publish_env_cmds([request.action[0], request.action[1], 0, request.action[2]])
+                # lin_vel, ang_vel = self.rosbridge.publish_env_cmd_vel(request.action[0], request.action[1])
+                # # if len(request.action) == 3:
+                # self.rosbridge.publish_env_arm_delta_cmd([0, request.action[2]])
+                # # else:
                 #     self.rosbridge.publish_env_arm_delta_cmd(request.action[2:4])
                 success = 1
             return robot_server_pb2.Success(success=success)

@@ -71,10 +71,10 @@ class RosBridge:
         # Rviz Path publisher
         self.mir_exec_path = rospy.Publisher('mir_exec_path', Path, queue_size=10)
         # Odometry of the robot subscriber
-        if self.real_robot:
-            rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
-        else:
-            rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
+        # if self.real_robot:
+        #     rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
+        # else:
+        #     rospy.Subscriber('odom', Odometry, self.callbackOdometry, queue_size=1)
 
         self.current_object_in_view = "object_0"
 
@@ -192,12 +192,28 @@ class RosBridge:
         if not self.real_robot :
             # Set Gazebo Robot Model state
             self.set_model_state('queenie', copy.deepcopy(state[3:6]))
+            rospy.sleep(0.5)
+            for i in range(2):
+                msg = JointTrajectory()
+                msg.header = Header()
+                msg.joint_names = self.joint_names
+                msg.points=[JointTrajectoryPoint()]
+                msg.points[0].positions = [0,0]
+                msg.points[0].time_from_start = rospy.Duration.from_sec(0.1)
+                self.arm_cmd_pub.publish(msg)
+                rospy.sleep(0.07)
+
             # Set Gazebo Target Model state
             # self.set_model_state('target', copy.deepcopy(state[0:3]))
             # Set obstacles poses
-            rospy.loginfo("calling load modell")
-            self.object_manager.load_model(self.target[1], state[6], state[7], state[8])
-            print(state)
+            # rospy.loginfo("calling load modell")
+            # self.object_manager.load_model(self.target[1], state[6], state[7], state[8])
+
+            self.set_model_state(self.current_object_in_view, object_locations[self.current_object_in_view])
+            rospy.sleep(0.5)
+            self.set_model_state("object_"+str(int(self.target[1])), copy.deepcopy(state[6:9]))
+            self.current_object_in_view = "object_"+str(int(self.target[1]))
+            # print(state)
 
             # self.relocate_models(self.target[1], copy.deepcopy(state[6:9]))
             
@@ -234,7 +250,40 @@ class RosBridge:
 
         return 1
 
-    
+    def publish_env_cmds(self, action):
+        lin_vel = action[0]
+        ang_vel = action[1]
+        delta_cmd = action[2:4]
+
+        msg_traj = JointTrajectory()
+        msg_traj.header = Header()
+        msg_traj.joint_names = self.joint_names
+        msg_traj.points=[JointTrajectoryPoint()]
+        # msg.points[0].positions = position_cmd
+        position_cmd = []
+        dur = []
+        for idx, name in enumerate(msg_traj.joint_names):
+            pos = self.joint_position[name]
+            cmd = delta_cmd[idx]
+            dur.append(0.1)
+            if name == "neck":
+                position_cmd.append(0)
+            else:
+                position_cmd.append(pos + cmd)
+        msg_traj.points[0].positions = position_cmd
+        msg_traj.points[0].time_from_start = rospy.Duration.from_sec(max(dur))
+
+        msg_cmd_vel = Twist()
+        msg_cmd_vel.linear.x = lin_vel
+        msg_cmd_vel.angular.z = ang_vel
+
+        self.arm_cmd_pub.publish(msg_traj)
+        self.env_cmd_vel_pub.publish(msg_cmd_vel)
+
+        rospy.sleep(0.07)
+
+
+
     
     def publish_env_arm_delta_cmd(self, delta_cmd):
         msg = JointTrajectory()
@@ -302,12 +351,15 @@ class RosBridge:
     
     def on_joint_states(self, msg:JointTrajectoryControllerState):
         if self.reset.isSet():
+            pos = []
             for idx, name in enumerate(msg.joint_names):
                 if name in self.joint_names:
                     if name == "neck":
                         self.joint_position[name] = 0
                     self.joint_position[name] = msg.actual.positions[idx]
+                    pos.append(msg.actual.positions[idx])
                     # self.joint_velocity[name] = msg.velocity[idx]
+            self.queenie_twist = copy.deepcopy(pos)
 
     def min_distance_to_handle_callback(self, data):
         self.min_distance_to_handle = [data.data]
